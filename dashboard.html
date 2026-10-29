@@ -126,8 +126,9 @@
   }
   select:disabled{ opacity:0.5; cursor:not-allowed; background-color:#F5F4EF; }
 
+  .tab-card.has-group{ grid-template-columns:repeat(5, 1fr); }
   @media (max-width:640px){
-    .tab-card{ grid-template-columns:1fr 1fr; }
+    .tab-card, .tab-card.has-group{ grid-template-columns:1fr 1fr; }
   }
 
   .controls-card{
@@ -333,10 +334,16 @@
           <option value="">--নির্বাচন করুন--</option>
         </select>
       </div>
+      <div class="field" id="groupField" style="display:none">
+        <label for="groupSelect"><span class="ic">🎓</span> গ্রুপ</label>
+        <select id="groupSelect" onchange="onGroupChange()" disabled>
+          <option value="">--গ্রুপ--</option>
+        </select>
+      </div>
       <div class="field">
-        <label for="sectionSelect"><span class="ic">🗂️</span> শাখা / গ্রুপ</label>
+        <label for="sectionSelect"><span class="ic">🗂️</span> শাখা</label>
         <select id="sectionSelect" onchange="onSectionChange()" disabled>
-          <option value="">--শাখা/গ্রুপ--</option>
+          <option value="">--শাখা--</option>
         </select>
       </div>
       <div class="field">
@@ -400,7 +407,7 @@
   // ============================================================
   // 🌐 আপনার Apps Script Web App-এর ডিপ্লয়মেন্ট URL এখানে বসান
   // ============================================================
-  const API_URL = "https://script.google.com/macros/s/AKfycbzdCBtMsDEaXm8EumZCBXPlccMQ_6yNfGm-_wJJF8aptYH2NtjlS26kZpsPu27_lJQ0/exec";
+  const API_URL = "https://script.google.com/macros/s/AKfycbxdVOwIpzWCSt6orqJxtEKMNJq438uBmi-QPWO1sYdnjT5KUuldr-oGfxlMsQ-m5TyzZA/exec";
 
   async function callApi(action, params) {
     const res = await fetch(API_URL, {
@@ -433,6 +440,16 @@
   };
 
   let classToSections = {};
+  let allExams = [];   // সব পরীক্ষা (classes: null = সব শ্রেণি, নয়তো যেসব শ্রেণির জন্য)
+
+  // classKey: "6_A" (শ্রেণি_শাখা) অথবা "9_SCI_Boys" (শ্রেণি_গ্রুপ_শাখা)
+  const SECTION_LABELS = { A: "ক", B: "খ", C: "গ", D: "ঘ", Boys: "বালক", Girls: "বালিকা" };
+  const GROUP_LABELS = { SCI: "বিজ্ঞান", HUM: "মানবিক", BUS: "ব্যবসায় শিক্ষা" };
+
+  function parseClassKey(key) {
+    const p = String(key).split('_');
+    return { cls: p[0], group: p.length >= 3 ? p[1] : null, section: p[p.length - 1] };
+  }
 
   // ============================================================
   // 📘 বর্তমানে নির্বাচিত ক্লাসের বিষয় তালিকা ও মেটাডেটা
@@ -452,7 +469,7 @@
     english2:    { cq: 100 },
     math:        { cq: 70, mcq: 30 },
     religion:    { cq: 70, mcq: 30 },
-    ict:         { mcq: 25, practical: 25 },
+    ict:         { cq: 25, mcq: 25 },
     science:     { cq: 70, mcq: 30 },
     bgs:         { cq: 70, mcq: 30 },
     agriculture: { cq: 50 }
@@ -571,7 +588,7 @@
         list.forEach(item => {
           const prefix = item.key.split('_')[0];
           if (!classToSections[prefix]) classToSections[prefix] = [];
-          classToSections[prefix].push(item);
+          classToSections[prefix].push(Object.assign({}, item, parseClassKey(item.key)));
         });
 
         const classSelect = document.getElementById('classSelect');
@@ -601,10 +618,8 @@
     callApi("getExamOptions", {})
       .then(function(options) {
         const examSelect = document.getElementById('examSelect');
-        examSelect.innerHTML = '<option value="">--পরীক্ষার নাম--</option>';
-        options.exams.forEach(item => {
-          examSelect.innerHTML += `<option value="${item.key}">${item.label}</option>`;
-        });
+        allExams = options.exams || [];
+        refreshExamOptions(document.getElementById('classSelect').value);
 
         const yearSelect = document.getElementById('yearSelect');
         yearSelect.innerHTML = '<option value="">--সাল--</option>';
@@ -617,27 +632,76 @@
       });
   }
 
-  function onClassChange() {
-    const cls = document.getElementById("classSelect").value;
-    const sectionSelect = document.getElementById("sectionSelect");
-    sectionSelect.innerHTML = '<option value="">--শাখা/গ্রুপ--</option>';
-
-    const sections = classToSections[cls] || [];
-    sections.forEach(item => {
-      const parts = item.label.split(' - ');
-      const shortLabel = parts.length > 1 ? parts[1] : item.label;
-      sectionSelect.innerHTML += `<option value="${item.key}">${shortLabel}</option>`;
+  // নির্বাচিত শ্রেণির জন্য প্রযোজ্য পরীক্ষাগুলোই দেখানো হয় (প্রি-টেস্ট/টেস্ট শুধু ১০ম)
+  function refreshExamOptions(cls) {
+    const examSelect = document.getElementById('examSelect');
+    const previous = examSelect.value;
+    examSelect.innerHTML = '<option value="">--পরীক্ষার নাম--</option>';
+    allExams.forEach(item => {
+      const allowed = !item.classes || (cls && item.classes.indexOf(cls) !== -1);
+      if (allowed) {
+        examSelect.innerHTML += `<option value="${item.key}">${item.label}</option>`;
+      }
     });
-    sectionSelect.disabled = sections.length === 0;
+    const stillThere = [...examSelect.options].some(o => o.value === previous);
+    examSelect.value = stillThere ? previous : "";
+    currentExamKey = examSelect.value;
+  }
 
+  function resetStudentsView(msg) {
     currentClassKey = "";
     allStudents = [];
     filteredStudents = [];
     resetSubjectSelect();
-    document.getElementById("studentsContainer").innerHTML =
-      "<p class='status-msg'>অনুগ্রহ করে শাখা/গ্রুপ নির্বাচন করুন।</p>";
+    document.getElementById("studentsContainer").innerHTML = "<p class='status-msg'>" + msg + "</p>";
     document.getElementById("pageInfo").textContent = "";
     updatePaginationButtons();
+  }
+
+  function fillSectionOptions(items) {
+    const sectionSelect = document.getElementById("sectionSelect");
+    sectionSelect.innerHTML = '<option value="">--শাখা--</option>';
+    items.forEach(item => {
+      const label = SECTION_LABELS[item.section] || item.section;
+      sectionSelect.innerHTML += `<option value="${item.key}">${label}</option>`;
+    });
+    sectionSelect.disabled = items.length === 0;
+  }
+
+  function onClassChange() {
+    const cls = document.getElementById("classSelect").value;
+    refreshExamOptions(cls);
+    const items = classToSections[cls] || [];
+    const hasGroup = items.some(i => i.group);
+
+    const groupField = document.getElementById("groupField");
+    const groupSelect = document.getElementById("groupSelect");
+    document.querySelector(".tab-card").classList.toggle("has-group", hasGroup);
+    groupField.style.display = hasGroup ? "" : "none";
+    groupSelect.innerHTML = '<option value="">--গ্রুপ--</option>';
+
+    if (hasGroup) {
+      const groups = [];
+      items.forEach(i => { if (i.group && groups.indexOf(i.group) === -1) groups.push(i.group); });
+      groups.forEach(g => {
+        groupSelect.innerHTML += `<option value="${g}">${GROUP_LABELS[g] || g}</option>`;
+      });
+      groupSelect.disabled = false;
+      fillSectionOptions([]);
+      resetStudentsView("অনুগ্রহ করে গ্রুপ নির্বাচন করুন।");
+    } else {
+      groupSelect.disabled = true;
+      fillSectionOptions(items);
+      resetStudentsView("অনুগ্রহ করে শাখা নির্বাচন করুন।");
+    }
+  }
+
+  function onGroupChange() {
+    const cls = document.getElementById("classSelect").value;
+    const group = document.getElementById("groupSelect").value;
+    const items = (classToSections[cls] || []).filter(i => i.group === group);
+    fillSectionOptions(group ? items : []);
+    resetStudentsView("অনুগ্রহ করে শাখা নির্বাচন করুন।");
   }
 
   function onSectionChange() {
